@@ -500,151 +500,274 @@ limit = 100
 
 ---
 
-# 8. AIkenGPTを評価する
+# 8. AIkenGPTの評価
 
-AIkenGPTはGoogle Colabでの実行を想定しています。
+AIkenGPTはローカルPCのGPUではなく、Google ColabのGPUを利用して評価することを想定しています。
 
-通常の評価ではモデルは固定し、主に **問題セット (`DATA_DIR`)** を変更します。
+本プロジェクトでは、**VS Code上でNotebookを開き、実行カーネルとしてGoogle Colabを利用する**運用を推奨します。
 
-Notebookは2種類あります。
+### 1. リポジトリをローカルにcloneする
 
-| Notebook | scoring |
-|---|---|
-| `evaluate_aikengpt_mmlu.ipynb` | A/B/C/Dのletter logit |
-| `evaluate_aikengpt_mmlu_text.ipynb` | 選択肢本文のteacher-forced likelihood |
+まず、ローカルPC上で本リポジトリをcloneします。
 
----
-
-## 8.1 Google ColabをGPU runtimeにする
-
-ColabでNotebookを開き、GPU runtimeを選択してください。
-
-AIkenGPTのlocal inferenceではPyTorch + GPUを使用します。
-
-Notebook内でもCUDAが利用可能か確認されます。
-
----
-
-## 8.2 初回だけリポジトリの場所を確認する
-
-Notebookは `PROJECT_DIR` から `mmlu_eval` をimportします。
-
-Google Driveにリポジトリを置く場合、`PROJECT_DIR` を自分の環境に合わせて設定してください。
-
-例:
-
-```python
-PROJECT_DIR = Path("/content/drive/MyDrive/<YOUR_REPOSITORY_DIRECTORY>")
+```bash
+git clone https://github.com/HayatoHongo/AIkenSGTv1.git
+cd AIkenSGTv1
+git switch tayama
 ```
 
-この設定は通常、初回の環境設定後は変更する必要はありません。
+現在、共有MMLU評価pipelineは `tayama` ブランチで管理しています。
 
-Notebookは次を確認します。
+MMLUの参照リポジトリも、同じ親ディレクトリにcloneしておくことを推奨します。
+
+```bash
+cd ..
+git clone https://github.com/hendrycks/test.git mmlu-reference
+```
+
+ローカルでは、例えば次の構成になります。
 
 ```text
-PROJECT_DIR / "mmlu_eval"
+workspace/
+├── AIkenSGTv1/
+└── mmlu-reference/
 ```
 
-が存在すること。
+なお、MMLUの `dev/`・`test/` データは `hendrycks/test` のcloneだけでは作成されません。本リポジトリの `download_mmlu_hf.py` を利用して、Hugging Faceの `cais/mmlu` から評価用CSVを生成します。
 
----
+### 2. VS CodeでNotebookを開く
 
-## 8.3 User settingsを設定する
+AIkenGPTの評価には以下のNotebookを使用します。
 
-通常、評価のたびに触るのはNotebook冒頭のUser settingsです。
+通常のA/B/C/D letter scoring：
 
-例:
+```text
+evaluate_aikengpt_mmlu.ipynb
+```
+
+選択肢本文のlikelihoodを用いる評価：
+
+```text
+evaluate_aikengpt_mmlu_text.ipynb
+```
+
+VS Codeで目的のNotebookを開きます。
+
+### 3. Google ColabのGPUカーネルへ接続する
+
+VS CodeからGoogle Colabのruntimeを実行カーネルとして選択し、GPU runtimeへ接続します。
+
+Notebookファイル自体はローカルのVS Code上で編集しますが、**セル内のPythonコードはColab側の環境で実行されます。**
+
+そのため、ローカルPCにcloneしたリポジトリは、ColabのPythonから直接参照できません。
+
+Notebookのsetupセルでは、Colab runtimeの一時領域 `/content/` に必要なリポジトリをcloneします。
 
 ```python
-DATA_DIR = Path("/content/drive/MyDrive/datasets/mmlu")
-OUTPUT_DIR = Path("/content/drive/MyDrive/aikengpt_mmlu_results")
+from pathlib import Path
+
+PROJECT_DIR = Path("/content/AIkenSGTv1_New")
+MMLU_ROOT = Path("/content/mmlu-reference")
+DATA_DIR = MMLU_ROOT / "data"
+
+# Evaluation repository
+if not (PROJECT_DIR / "mmlu_eval").is_dir():
+    !rm -rf /content/AIkenSGTv1_New
+    !git clone https://github.com/HayatoHongo/AIkenSGTv1.git /content/AIkenSGTv1_New
+    !cd /content/AIkenSGTv1_New && git switch tayama
+
+# MMLU reference repository
+if not MMLU_ROOT.exists():
+    !git clone https://github.com/hendrycks/test.git /content/mmlu-reference
+
+# Create MMLU dev/test CSV files if they do not exist
+if not (DATA_DIR / "dev").is_dir() or not (DATA_DIR / "test").is_dir():
+    !pip install -q datasets pandas
+    !cd /content/mmlu-reference && python /content/AIkenSGTv1_New/download_mmlu_hf.py
+```
+
+Colab runtimeは一時的な環境なので、runtimeを新しくすると `/content/` 以下のcloneや生成済みMMLUデータは消える場合があります。
+
+その場合でも、Notebookを上から実行すれば必要なものが再度準備されます。
+
+### 4. Google Driveをマウントする
+
+AIkenGPTのcheckpointや評価結果など、runtime終了後も保持したいファイルにはGoogle Driveを利用します。
+
+```python
+from google.colab import drive
+drive.mount("/content/drive")
+```
+
+役割分担は次のようになります。
+
+```text
+ローカルPC / VS Code
+    └── Notebookの編集・Git操作
+
+GitHub
+    └── 評価コードの共有・バージョン管理
+
+Colab /content/
+    ├── AIkenSGTv1_New/     # 実行用の一時clone
+    └── mmlu-reference/     # 実行用のMMLUデータ
+
+Google Drive
+    ├── AIkenGPT checkpoint
+    └── 評価結果
+```
+
+Google Driveにリポジトリそのものをコピーしておく必要はありません。
+
+### 5. 評価条件を設定する
+
+通常変更する設定はNotebook冒頭の設定セルにまとめています。
+
+例：
+
+```python
+OUTPUT_DIR = Path("/content/drive/MyDrive/aikengpt_results")
 
 SUBJECT = None
-NTRAIN = 5
+NTRAIN = 0
 SAMPLE_FRAC = 0.10
 SEED = 42
 LIMIT = 10
 MANIFEST_PATH = None
 ```
 
-主な設定:
+主な設定：
 
-| 変数 | 意味 |
-|---|---|
-| `DATA_DIR` | 問題セットのroot |
-| `OUTPUT_DIR` | 結果保存先 |
-| `SUBJECT` | 1 subjectだけ評価。`None`なら全subject |
-| `NTRAIN` | requested few-shot数 |
-| `SAMPLE_FRAC` | sampling割合 |
-| `SEED` | sampling seed |
-| `LIMIT` | 最大問題数。`0`なら制限なし |
-| `MANIFEST_PATH` | 既存manifestを再利用する場合のpath |
+| 設定              | 意味                                     |
+| --------------- | -------------------------------------- |
+| `SUBJECT`       | 特定subjectだけ評価する場合に指定。`None` なら全subject |
+| `NTRAIN`        | few-shot例の数。`0` はzero-shot             |
+| `SAMPLE_FRAC`   | 全問題から抽出する割合                            |
+| `SEED`          | sampling seed                          |
+| `LIMIT`         | 実際に評価する最大問題数。`0` なら抽出された問題をすべて使用       |
+| `MANIFEST_PATH` | 既存manifestを使って同じ問題集合を再評価する場合に指定        |
 
-### 最初の試験運用
-
-最初は必ず小さくしてください。
+最初の動作確認では、
 
 ```python
+NTRAIN = 0
 LIMIT = 10
 ```
 
-問題がなければ後で増やします。
+程度の小規模評価を推奨します。
 
----
+### 6. scoring方式
 
-## 8.4 Project settingsを確認する
+#### 通常版
 
-標準比較では次の設定を使用します。
+`evaluate_aikengpt_mmlu.ipynb` では、
 
 ```python
-TOKENIZER = "gpt2"
-DEVICE = "cuda"
-DTYPE = "float32"
-BATCH_SIZE = 1
-MAX_CONTEXT_LENGTH = 2048
-CONTEXT_POLICY = "reduce"
-CONTEXT_TOKENIZER = "gpt2"
-PERMUTATION_COUNT = 4
+SCORING_METHOD = "letter"
 ```
 
-通常の問題セット変更ではここを変更しません。
+として、prompt末尾に続く `" A"`, `" B"`, `" C"`, `" D"` のlogitを比較します。
 
-AIkenGPT checkpointは、Notebookの設定に応じてHugging Faceから取得するか、`MODEL_PATH` でlocal `.safetensors` を指定します。
+#### choice-text版
 
-現在のNotebook構成では、Hugging Face repositoryとcheckpoint filenameをProject settings側で管理します。
+`evaluate_aikengpt_mmlu_text.ipynb` では、
 
----
+```python
+SCORING_METHOD = "choice_text"
+TEXT_REDUCTION = "mean"
+```
 
-## 8.5 Notebookを上から実行する
+などとして、各選択肢本文のteacher-forced likelihoodを比較します。
 
-Notebookは次の順番で構成されています。
+`TEXT_REDUCTION` は次の2種類です。
 
-1. Settings
-2. Environment setup
-3. Model loading
-4. Dataset / evaluator setup
-5. Preflight / manifest
-6. Evaluation
-7. Results
+```text
+sum
+```
 
-基本的には **Runtime → Run all** で実行します。
+候補tokenのlog probabilityを合計します。長い選択肢ほど不利になりやすい方式です。
 
-### Preflightで確認すること
+```text
+mean
+```
 
-Evaluationに入る前に、Notebookはmanifestとprompt traceを作成し、最初のpromptを表示します。
+候補token数で平均します。選択肢長に対するlength normalizationを行います。
 
-表示内容を見て、次を確認してください。
+### 7. context length
 
-- 問題数が想定どおりか
-- `prompts = questions × 4` になっているか
-- first promptが正しいか
-- few-shot例が意図したsubjectのものか
-- 選択肢の形式が崩れていないか
-- `effective_ntrain` が不自然に小さくなっていないか
+AIkenGPTの最大context長に合わせて、OpenAIとAIkenGPTの比較では共通して次の設定を使用します。
 
-問題があればEvaluationを進めず、まずdata/settingsを修正してください。
+```python
+CONTEXT_POLICY = "reduce"
+CONTEXT_TOKENIZER = "gpt2"
+MAX_CONTEXT_LENGTH = 2048
+```
 
----
+requested `NTRAIN` のpromptが2048 tokensを超える場合、4つのpermutationすべてが収まるまでfew-shot例を減らします。
+
+実際に使用されたshot数は、
+
+```text
+effective_ntrain
+```
+
+として結果に記録されます。
+
+これにより、OpenAIだけ長いpromptを使用し、AIkenGPTだけshot数を減らす、といった評価条件の不一致を防ぎます。
+
+### 8. 実行する
+
+設定後、Notebookを上から順番に実行します。
+
+大まかな流れは次のとおりです。
+
+```text
+repository / dataset setup
+        ↓
+Google Drive mount
+        ↓
+package installation
+        ↓
+AIkenGPT checkpoint load
+        ↓
+manifest / prompt generation
+        ↓
+MMLU evaluation
+        ↓
+result output
+```
+
+初回は10問程度で最後まで実行できることを確認してから、評価対象を増やすことを推奨します。
+
+### 9. GPUメモリ不足が発生した場合
+
+AIkenGPTのモデル読み込み中などに、
+
+```text
+OutOfMemoryError: CUDA out of memory
+```
+
+が発生した場合、以前のモデルやTensorがGPUメモリに残っている可能性があります。
+
+まず、
+
+```python
+!nvidia-smi
+```
+
+でGPU使用量を確認してください。
+
+ColabのL4 GPUで、モデル実行前にもかかわらずPythonプロセスが大量のVRAMを使用している場合は、カーネルを再起動してから再実行します。
+
+クリーンな状態では、例えば次のようにGPUメモリがほぼ空になります。
+
+```text
+Memory-Usage: 数MiB / 約23GiB
+No running processes found
+```
+
+カーネル再起動後は、Notebookを上から順番に実行し直してください。
+
 
 # 9. AIkenGPT letter scoring
 
