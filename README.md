@@ -1,221 +1,1139 @@
-# OpenAI / AIkenGPT 共通MMLU-style評価
+# AIkenGPT / OpenAI MMLU-style Evaluation
 
-## Overview
+まず、
+git clone https://github.com/HayatoHongo/AIkenSGTv1.git
+cd AIkenSGTv1
+git switch tayama
+cd ..
+git clone https://github.com/hendrycks/test.git mmlu-reference
+を実行してください。
 
-このリポジトリは、OpenAIモデルとAIkenGPTを同じ評価pipelineで比較します。
+このリポジトリは、4択問題データを用いて **OpenAIモデル** と **AIkenGPT** を共通の評価パイプラインで評価するためのものです。
 
-- OpenAIはモデル名と問題セットをCLIで指定します。
-- AIkenGPTはColab Notebookの問題セット設定を変更してRun allします。
-- 両方とも `MMLUEvaluator` を使い、モデル固有処理だけを `mmlu_eval/backends/` に分離しています。
+主な用途は次の2つです。
 
-正式なOpenAI entry pointは **`evaluate_mmlu_openai_permutation.py`** です。AIkenGPTでは、letter scoringに `evaluate_aikengpt_mmlu.ipynb`、選択肢本文のlikelihood scoringに `evaluate_aikengpt_mmlu_text.ipynb` を使います。
+1. **AIkenGPT**
+   - AIkenGPTのモデルは基本的に固定し、評価する問題セットを差し替えて評価する。
+   - Google Colab上でNotebookを実行する。
+2. **OpenAIモデル**
+   - 評価する問題セットとモデル名の両方を差し替えて評価する。
+   - CLIから実行する。
 
-## Quick Start: OpenAI
+OpenAIとAIkenGPTではモデルの呼び出し方法は異なりますが、問題の読み込み、sampling、few-shot prompt、選択肢permutation、位置バイアス補正、集計などは共通の `mmlu_eval` パイプラインを使用します。
 
-Python 3.10以上で依存packageをインストールします。
+---
 
-```bash
-python -m pip install -r requirements-openai.txt
+## 1. まず何をすればよいか
+
+初めて使う場合は、いきなり全問を評価せず、次の順番で試すことを推奨します。
+
+### OpenAIを評価したい場合
+
+1. リポジトリをcloneする
+2. Python環境を作る
+3. 問題データを指定形式で用意する
+4. OpenAI API keyを設定する
+5. `--dry_run --limit 10` でpromptを確認する
+6. 10問だけ実際に評価する
+7. 結果を確認する
+8. 問題なければ問題数やモデル名を変更して本評価する
+
+### AIkenGPTを評価したい場合
+
+1. Google ColabでNotebookを開く
+2. GPU runtimeを選ぶ
+3. リポジトリと問題データの場所を設定する
+4. `LIMIT = 10` にしてpreflightを確認する
+5. 10問だけ実際に評価する
+6. 結果を確認する
+7. 問題なければ問題セット・問題数を変更して本評価する
+
+### OpenAIとAIkenGPTを同じ問題で比較したい場合
+
+1. 片方のrunでmanifestを作る
+2. もう片方のrunで同じmanifestを指定する
+3. `prompts.jsonl` を比較し、backend直前の入力が一致していることを確認する
+4. そのうえで結果を比較する
+
+---
+
+# 2. リポジトリの主な構成
+
+概念的には次の構成です。
+
+```text
+.
+├── evaluate_mmlu_openai_permutation.py   # OpenAI評価の正式な入口
+├── evaluate_mmlu_permutation.py          # deprecated compatibility wrapper
+├── evaluate_aikengpt_mmlu.ipynb          # AIkenGPT: A/B/C/D letter scoring
+├── evaluate_aikengpt_mmlu_text.ipynb     # AIkenGPT: 選択肢本文の尤度
+│
+├── mmlu_eval/
+│   ├── core.py                           # 共通評価パイプライン
+│   ├── cli.py                            # OpenAI CLI
+│   ├── compare.py                        # pre-backend promptの比較
+│   └── backends/
+│       ├── openai_backend.py             # OpenAI API固有処理
+│       ├── aikengpt_backend.py            # AIkenGPT推論・scoring
+│       └── aikengpt_model.py              # AIkenGPTモデル定義
+│
+└── tests/
+    └── test_mmlu.py                      # 共通評価パイプラインのテスト
 ```
 
-API keyを設定します。
+`evaluate_mmlu_permutation.py` は互換性のために残されているdeprecated wrapperです。**新しくOpenAI評価を行う場合は `evaluate_mmlu_openai_permutation.py` を使用してください。**
 
-```bash
-export OPENAI_API_KEY="YOUR_API_KEY"       # macOS / Linux
-```
+旧来の独立実装が残っている場合も、共通pipelineを使った比較実験では使用しないでください。
 
-```powershell
-$env:OPENAI_API_KEY = "YOUR_API_KEY"       # Windows PowerShell
-```
+---
 
-モデル名と問題セットを指定して実行します。
+# 3. 問題データの用意
 
-```bash
-python evaluate_mmlu_openai_permutation.py \
-  --model gpt-4o-mini \
-  --data_dir ./datasets/mmlu
-```
+このコードは任意形式のCSVを自動変換しません。
 
-別モデル・別問題セットでは、主にこの2引数だけを変更します。
+**評価したい問題データ側を、以下のMMLU-style形式に合わせてください。**
 
-```bash
-python evaluate_mmlu_openai_permutation.py \
-  --model <another-model> \
-  --data_dir ./datasets/another_dataset
-```
+## 3.1 ディレクトリ構成
 
-APIを呼ばず、manifestと最終promptだけを確認するには `--dry_run` を付けます。
-
-```bash
-python evaluate_mmlu_openai_permutation.py \
-  --model gpt-4o-mini \
-  --data_dir ./datasets/mmlu \
-  --limit 10 \
-  --dry_run
-```
-
-`gpt-4o-mini`をChat Completionsで使う場合の例です。
-
-```bash
-python evaluate_mmlu_openai_permutation.py \
-  --model gpt-4o-mini \
-  --data_dir ./datasets/mmlu \
-  --api_mode chat \
-  --answer_prefix bare
-```
-
-標準の `--api_mode completions --answer_prefix space` は既存実験との互換設定です。利用モデルがendpointと回答token形式をサポートするか確認してください。API側の制約は [MMLU_REFACTOR.md](MMLU_REFACTOR.md) に記載しています。
-
-## Quick Start: AIkenGPT
-
-1. Colabで `evaluate_aikengpt_mmlu.ipynb`（letter）または `evaluate_aikengpt_mmlu_text.ipynb`（本文likelihood）を開きます。
-2. 先頭の **User settings** で、少なくとも `DATA_DIR` と `OUTPUT_DIR` を変更します。
-3. 必要なら `SUBJECT`、`LIMIT`、`MANIFEST_PATH` を変更します。
-4. text版では `TEXT_REDUCTION` を `"sum"` または `"mean"` に設定します。
-5. GPU runtimeを選び、Run allします。
-
-checkpoint、tokenizer、device、dtypeは **Project settings** に分離しています。通常の問題セット変更では編集不要です。Drive上のリポジトリ位置が異なる場合だけ `PROJECT_DIR` も変更してください。
-
-## Dataset Format
-
-任意形式のCSVは受け付けません。利用者側で次の正式な入力形式へ変換してください。
+1つの問題セットは、次のように `dev/` と `test/` を持ちます。
 
 ```text
 <data_dir>/
 ├── dev/
 │   ├── <subject1>_dev.csv
-│   └── <subject2>_dev.csv
+│   ├── <subject2>_dev.csv
+│   └── ...
 └── test/
     ├── <subject1>_test.csv
-    └── <subject2>_test.csv
+    ├── <subject2>_test.csv
+    └── ...
 ```
 
-各CSVはヘッダーなし、各行が厳密に6列です。
+例:
 
 ```text
-question,choice_A,choice_B,choice_C,choice_D,correct_label
+datasets/
+└── mmlu/
+    ├── dev/
+    │   ├── abstract_algebra_dev.csv
+    │   └── high_school_biology_dev.csv
+    └── test/
+        ├── abstract_algebra_test.csv
+        └── high_school_biology_test.csv
 ```
+
+`dev` と `test` でsubject名を一致させてください。
+
+## 3.2 CSV形式
+
+各CSVは **ヘッダーなしの6列** です。
+
+```text
+question, choice_A, choice_B, choice_C, choice_D, correct_label
+```
+
+例:
 
 ```csv
 What is the capital of Japan?,Tokyo,Osaka,Kyoto,Nagoya,A
 Which number is prime?,4,6,7,8,C
 ```
 
-入力条件:
+各列の意味:
 
-- 1列目は問題文、2〜5列目は4つの選択肢です。
-- 6列目は正解ラベル `A`〜`D`。前後の空白は除去して検証します。
-- 各 `test/<subject>_test.csv` に同名の `dev/<subject>_dev.csv` が必要です。`NTRAIN=0` でもdevファイルは必要です。
-- `NTRAIN` / `--ntrain` は各subjectのdev行数以下にします。few-shotにはdev先頭から指定数を使います。
-- test questionだけをpermutationし、few-shot例のchoice orderは固定です。
-- 引用符や改行を含むfieldは通常のCSV規則でquoteしてください。
-- Pandasが欠損値と解釈する `NA`、`N/A`、`null` などはprompt内で `nan` になることがあります。問題文・選択肢では避けてください。
-- ヘッダーや追加列、4択以外の選択肢数には対応しません。
+| 列 | 内容 |
+|---|---|
+| 1 | 問題文 |
+| 2 | 選択肢A |
+| 3 | 選択肢B |
+| 4 | 選択肢C |
+| 5 | 選択肢D |
+| 6 | 正解ラベル `A` / `B` / `C` / `D` |
 
-`download_mmlu_hf.py` で既存MMLUデータを取得・変換できます。データ自体はリポジトリに含めません。
+注意:
 
-## Configuration
+- ヘッダー行は付けません。
+- 正解ラベルは `A`, `B`, `C`, `D` のいずれかにしてください。
+- 問題文や選択肢にカンマが含まれる場合は、通常のCSV規則に従って引用符で囲んでください。
+- `ntrain=5` なら、各subjectの `dev` に少なくとも5問必要です。
+- zero-shot (`ntrain=0`) の場合でも、現在のloaderは `dev/` と `test/` の両方を読み込むため、対応するdevファイルを用意してください。
 
-| 目的 | OpenAI CLI | AIkenGPT Notebook |
-| --- | --- | --- |
-| モデル変更 | `--model` | 原則固定（Project settings） |
-| 問題セット変更 | `--data_dir` | `DATA_DIR` |
-| 出力先 | `--output_dir` | `OUTPUT_DIR` |
-| subject指定 | `--subject` | `SUBJECT` |
-| few-shot数 | `--ntrain` | `NTRAIN` |
-| sampling比率 | `--sample_frac` | `SAMPLE_FRAC` |
-| 問題数制限 | `--limit` | `LIMIT` |
-| sampling seed | `--seed` | `SEED` |
-| 同じ問題集合を再利用 | `--manifest` | `MANIFEST_PATH` |
+---
 
-主要なOpenAIオプション:
+# 4. 共通の評価方法
 
-| オプション | 標準値 | 意味 |
-| --- | --- | --- |
-| `--model` | `gpt-4o-mini` | OpenAI model identifier |
-| `--data_dir` | 必須 | 上記形式の問題セット |
-| `--subject` | 全subject | 1 subjectだけを評価 |
-| `--ntrain` | `5` | dev先頭から使うfew-shot数。`0`はzero-shot |
-| `--sample_frac` | `0.1` | 全subjectのtest問題を結合した後の抽出割合 |
-| `--limit` | `0` | 抽出後の先頭件数。`0`は抽出分をすべて使用 |
-| `--seed` | `42` | sampling seed |
-| `--manifest` | なし | 既存manifestの全行を記載順に使用 |
-| `--output_dir` | `results_permutation_shared` | 出力先 |
-| `--dry_run` | off | APIを呼ばずmanifestとpromptを生成 |
+OpenAIとAIkenGPTは、モデル固有のscoring部分を除いて同じ `MMLUEvaluator` を通ります。
 
-`--context_policy reduce --context_tokenizer gpt2 --max_context_length 2048` が標準設定です。`--context_policy fixed` を選んだ場合も2048-token上限は検査され、1つのpermutationでも超過すればエラーになります。
+評価の流れは次のとおりです。
 
-`python evaluate_mmlu_openai_permutation.py --help` ですべてのoptionを確認できます。
+```text
+問題データ読み込み
+        ↓
+sampling / manifest
+        ↓
+few-shot prompt生成
+        ↓
+共通context lengthチェック
+        ↓
+test questionの4 cyclic permutations
+        ↓
+モデル固有backendでscoring
+        ↓
+表示位置から元の選択肢へscoreを戻す
+        ↓
+baseline / debiased prediction
+        ↓
+accuracy・各種指標を保存
+```
 
-## Reusing a Manifest
+## 4.1 Prompt
 
-複数モデルで同じ問題集合を使う場合は、最初のrunが生成した `.manifest.csv` を再利用します。
+few-shotの場合、devセットから先頭 `ntrain` 問をdemonstrationとして使用します。
+
+概念的には次の形式です。
+
+```text
+The following are multiple choice questions (with answers) about <subject>.
+
+<Question 1>
+A. ...
+B. ...
+C. ...
+D. ...
+Answer: B
+
+...
+
+<Target question>
+A. ...
+B. ...
+C. ...
+D. ...
+Answer:
+```
+
+few-shot demonstrationの選択肢順は固定し、**評価対象のtest questionだけをpermutationします。**
+
+## 4.2 4 cyclic permutations
+
+各test questionについて、選択肢を4通りのcyclic orderで評価します。
+
+```text
+Permutation 0: A B C D
+Permutation 1: B C D A
+Permutation 2: C D A B
+Permutation 3: D A B C
+```
+
+これにより、内容ではなく「Aの位置を選びやすい」などの回答位置バイアスの影響を確認・軽減します。
+
+## 4.3 Baselineとdebiased
+
+### Baseline
+
+元の順番 (`Permutation 0`) だけを使ったpredictionです。
+
+### Debiased
+
+1. 各permutation内で4候補のscoreをsoftmaxする
+2. 表示位置A/B/C/Dから、元のsemantic choiceへ確率を戻す
+3. 4 permutationsの確率を平均する
+4. 平均確率が最大の選択肢をpredictionとする
+
+この結果、各問題について `baseline_pred` と `debiased_pred` の両方が保存されます。
+
+---
+
+# 5. Context lengthの扱い
+
+AIkenGPTの最大context長に合わせ、比較実験では標準で次の設定を使用します。
+
+```text
+CONTEXT_POLICY = reduce
+CONTEXT_TOKENIZER = gpt2
+MAX_CONTEXT_LENGTH = 2048
+```
+
+## `reduce`
+
+requested `ntrain` から0まで順に減らし、**4つすべてのpermutationが共通GPT-2 tokenizerで2048 tokens以内になる最大のk** を採用します。
+
+例:
+
+```text
+requested ntrain = 5
+5-shot → 1つのpermutationが2048超過
+4-shot → 4つすべて2048以内
+
+→ effective_ntrain = 4
+```
+
+その問題で実際に使われたshot数は `effective_ntrain` としてmanifest・resultに記録されます。
+
+この処理はモデルに依存せず共通pipelineで行うため、同じdataset・設定・manifestを使うOpenAIとAIkenGPTでは同じ `effective_ntrain` になります。
+
+## `fixed`
+
+requested `ntrain` をそのまま使用します。ただし4 permutationのうち1つでも共通context budgetを超える場合はエラーにします。
+
+通常のOpenAI / AIkenGPT比較では `reduce` を推奨します。
+
+AIkenGPT backend側にもモデル固有の最終contextチェックを残してあります。
+
+---
+
+# 6. OpenAIモデルを評価する
+
+OpenAIでは、主に次の2つを変更します。
+
+- `--model`: 評価するモデル
+- `--data_dir`: 評価する問題セット
+
+正式なentry pointは次です。
+
+```text
+evaluate_mmlu_openai_permutation.py
+```
+
+## 6.1 リポジトリをclone
+
+```bash
+git clone <REPOSITORY_URL>
+cd <REPOSITORY_DIRECTORY>
+```
+
+## 6.2 仮想環境を作る
+
+### Windows + Git Bash
+
+```bash
+python -m venv .venv
+source .venv/Scripts/activate
+```
+
+### Linux / macOS
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+```
+
+有効になると、shellの先頭などに `(.venv)` と表示されます。
+
+## 6.3 必要なpackageを入れる
+
+リポジトリにrequirementsファイルがある場合は、それを優先してください。
+
+```bash
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
+
+requirementsファイルを使わない場合、OpenAI評価の主な依存packageは次です。
+
+```bash
+python -m pip install numpy pandas tiktoken openai
+```
+
+テストも実行する場合:
+
+```bash
+python -m pip install pytest
+```
+
+## 6.4 API keyを設定
+
+API keyをコードやGit管理ファイルへ直接書かないでください。
+
+### Bash / Git Bash
+
+```bash
+export OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+```
+
+### PowerShell
+
+```powershell
+$env:OPENAI_API_KEY="<YOUR_OPENAI_API_KEY>"
+```
+
+確認:
+
+```bash
+python -c "import os; print(bool(os.getenv('OPENAI_API_KEY')))"
+```
+
+`True` と表示されれば環境変数から読み取れています。
+
+## 6.5 まずdry runする
+
+APIを呼ぶ前に、10問だけ選び、manifestとpromptを生成して確認します。
 
 ```bash
 python evaluate_mmlu_openai_permutation.py \
-  --model <another-model> \
-  --data_dir ./datasets/mmlu \
-  --manifest ./manifests/mmlu_10percent_seed42.csv
+  --model gpt-4o-mini \
+  --data_dir "./datasets/mmlu" \
+  --ntrain 5 \
+  --sample_frac 0.1 \
+  --seed 42 \
+  --limit 10 \
+  --context_policy reduce \
+  --context_tokenizer gpt2 \
+  --max_context_length 2048 \
+  --output_dir "./results/openai_trial" \
+  --dry_run
 ```
 
-Notebookでは `MANIFEST_PATH = "/content/drive/MyDrive/manifests/mmlu_10percent_seed42.csv"` とします。
+`--dry_run` ではOpenAI APIを呼びません。
+
+生成されたmanifestと `prompts.jsonl` を開き、次を確認してください。
+
+- 意図した問題が選ばれているか
+- 選択肢A-Dが正しく入っているか
+- few-shot promptが期待どおりか
+- 1問につき4 permutationが生成されているか
+- `effective_ntrain` が妥当か
+
+## 6.6 10問だけ実際に評価する
+
+確認できたら `--dry_run` を外します。
+
+```bash
+python evaluate_mmlu_openai_permutation.py \
+  --model gpt-4o-mini \
+  --data_dir "./datasets/mmlu" \
+  --ntrain 5 \
+  --sample_frac 0.1 \
+  --seed 42 \
+  --limit 10 \
+  --context_policy reduce \
+  --context_tokenizer gpt2 \
+  --max_context_length 2048 \
+  --output_dir "./results/openai_trial"
+```
+
+API利用量・rate limitに注意してください。まず少数問で正常終了することを確認してから問題数を増やしてください。
+
+## 6.7 モデルを変える
+
+`--model` だけ変更します。
+
+```bash
+python evaluate_mmlu_openai_permutation.py \
+  --model <MODEL_NAME> \
+  --data_dir "./datasets/mmlu" \
+  --limit 10
+```
+
+使用するモデル・endpointがlogprobsを返せる必要があります。
+
+デフォルトは `--api_mode completions` です。必要な場合は、対応モデルに合わせて次を指定できます。
+
+```bash
+--api_mode chat
+```
+
+ただしchat modeでは、同じuser-visible promptでもAPI側のchat formattingが加わります。AIkenGPTとの入力条件を最も単純に比較したい場合は、利用可能であればcompletions modeを使用してください。
+
+## 6.8 問題セットを変える
+
+`--data_dir` を別のMMLU-style datasetへ変更します。
+
+```bash
+python evaluate_mmlu_openai_permutation.py \
+  --model gpt-4o-mini \
+  --data_dir "./datasets/my_questions" \
+  --limit 10
+```
+
+コード側を変更する必要はありません。
+
+---
+
+# 7. OpenAI CLIの主要オプション
+
+| option | 意味 | 標準的な値 |
+|---|---|---|
+| `--model` | OpenAIモデル名 | `gpt-4o-mini` |
+| `--data_dir` | `dev/`, `test/` を含むdataset root | 必須 |
+| `--subject` | 1 subjectだけ評価 | 未指定なら全subject |
+| `--ntrain` | requested few-shot数 | `5` |
+| `--sample_frac` | test全体からsamplingする割合 | `0.1` |
+| `--seed` | 問題sampling seed | `42` |
+| `--limit` | sampling後に評価する最大問題数 | `0` = 制限なし |
+| `--manifest` | 既存manifestを再利用 | 未指定なら生成 |
+| `--workers` | OpenAI request worker数 | `10` |
+| `--output_dir` | 結果保存先 | CLI設定参照 |
+| `--context_policy` | `reduce` / `fixed` | `reduce` |
+| `--context_tokenizer` | 共通context判定tokenizer | `gpt2` |
+| `--max_context_length` | 共通context budget | `2048` |
+| `--api_mode` | `completions` / `chat` | `completions` |
+| `--dry_run` | APIを呼ばずmanifest/prompt生成 | off |
+
+## `sample_frac` と `limit` の違い
+
+この2つは混同しやすいので注意してください。
+
+- `sample_frac`: test dataset全体から何割をsampling候補として選ぶか
+- `limit`: sampling後の問題列から何問まで実際に使うか
+
+例えば:
 
 ```text
-同じdataset + 同じEvalConfig + 同じmanifest
-→ backend直前まで同じquestion / choices / label / few-shot / permutation / prompt
+sample_frac = 0.1
+limit = 100
 ```
 
-`cases_hash` は各問題の4 cases、`.prompts.jsonl` は完全な入力を記録します。2 runの入力は厳密比較できます。
+なら、まず全test問題の10%をseed固定でsamplingし、その中から最大100問を使います。
+
+### 全問題を評価したい場合
 
 ```bash
-python -m mmlu_eval.compare path/to/openai.prompts.jsonl path/to/aikengpt.prompts.jsonl
+--sample_frac 1.0 --limit 0
 ```
 
-## Evaluation Method
-
-1. `dev/` と `test/` を読み込みます。
-2. 全test問題を結合し、seed付きでsamplingします。manifest指定時はその全行を記載順に使います。
-3. dev先頭のfew-shot例を追加します。demonstrationのchoice orderは固定です。
-4. test questionだけを4つのcyclic orderで提示します。
-5. backendが表示位置順の4 choice scoreを返します。
-6. 共通側でsoftmaxし、各scoreを元のsemantic choiceへ戻します。
-7. original orderのargmaxをbaseline、4配置のmapped probability平均のargmaxをdebiased predictionとします。
-8. 問題別、subject別、全体のmicro accuracyを共通コードで計算します。
-
-標準実験ではGPT-2 tokenizerによる共通2048-token budgetを使います。5-shotを指定していても、4つのpermutationのうち1つでもbudgetを超える問題では、OpenAIとAIkenGPTの両方で同じようにshot数を5から0まで減らします。4配置すべてが収まる最大値を `effective_ntrain` としてmanifestと結果CSVに記録します。これにより、両backendへ同じshot数・同じpromptが渡ります。0-shotでも超過する場合はエラーになります。
-
-text版の `TEXT_REDUCTION="sum"` は候補tokenのlog probability合計で、長い候補ほど不利になりやすい方式です。`"mean"` はtoken数で平均する長さ正規化scoreです。
-
-## Output Files
-
-| ファイル | 役割 |
-| --- | --- |
-| 結果 `.csv` | 問題、正解、baseline/debiased予測、各choice/permutationのscoreとprobability |
-| `.manifest.csv` | 問題順、dataset/config/cases hash、effective ntrain |
-| `.prompts.jsonl` | backend直前の全evaluation cases |
-| `.run.json` | pipeline、backend、model、runtime、package version |
-| `.subjects.csv` | subject別集計 |
-| `.overall.json` | 全問題のmicro集計 |
-
-結果は1問ごとにatomic保存します。resume時はrun metadata、manifest、cases hashを検証し、未完了分だけを続行します。
-
-## Entry Points and Validation
-
-- `evaluate_mmlu_openai_permutation.py`: 正式なOpenAI entry point。
-- `evaluate_mmlu_permutation.py`: 旧ファイル名の非推奨compatibility wrapper。
-- `evaluate_openai.py`: 共通pipeline導入前のlegacy implementation。過去実験の再現専用で、新規評価には使いません。
-- `legacy/`: リファクタリング前の原本。新規実験の入口ではありません。
+### 特定subjectの全問題
 
 ```bash
-python -m pip install -r requirements-mmlu.txt
-python -m unittest discover -s tests -v
-python tests/verify_real_data.py --data_dir ./datasets/mmlu
+--subject abstract_algebra --sample_frac 1.0 --limit 0
 ```
 
-回帰テスト、既存設計との差、API制約、評価値が変化しうる箇所は [MMLU_REFACTOR.md](MMLU_REFACTOR.md) を参照してください。
+---
 
-## References
+# 8. AIkenGPTを評価する
 
-- [MMLU original repository](https://github.com/hendrycks/test)
-- [MMLU dataset](https://huggingface.co/datasets/cais/mmlu)
-- [OpenAI API documentation](https://developers.openai.com/api/docs)
+AIkenGPTはGoogle Colabでの実行を想定しています。
+
+通常の評価ではモデルは固定し、主に **問題セット (`DATA_DIR`)** を変更します。
+
+Notebookは2種類あります。
+
+| Notebook | scoring |
+|---|---|
+| `evaluate_aikengpt_mmlu.ipynb` | A/B/C/Dのletter logit |
+| `evaluate_aikengpt_mmlu_text.ipynb` | 選択肢本文のteacher-forced likelihood |
+
+---
+
+## 8.1 Google ColabをGPU runtimeにする
+
+ColabでNotebookを開き、GPU runtimeを選択してください。
+
+AIkenGPTのlocal inferenceではPyTorch + GPUを使用します。
+
+Notebook内でもCUDAが利用可能か確認されます。
+
+---
+
+## 8.2 初回だけリポジトリの場所を確認する
+
+Notebookは `PROJECT_DIR` から `mmlu_eval` をimportします。
+
+Google Driveにリポジトリを置く場合、`PROJECT_DIR` を自分の環境に合わせて設定してください。
+
+例:
+
+```python
+PROJECT_DIR = Path("/content/drive/MyDrive/<YOUR_REPOSITORY_DIRECTORY>")
+```
+
+この設定は通常、初回の環境設定後は変更する必要はありません。
+
+Notebookは次を確認します。
+
+```text
+PROJECT_DIR / "mmlu_eval"
+```
+
+が存在すること。
+
+---
+
+## 8.3 User settingsを設定する
+
+通常、評価のたびに触るのはNotebook冒頭のUser settingsです。
+
+例:
+
+```python
+DATA_DIR = Path("/content/drive/MyDrive/datasets/mmlu")
+OUTPUT_DIR = Path("/content/drive/MyDrive/aikengpt_mmlu_results")
+
+SUBJECT = None
+NTRAIN = 5
+SAMPLE_FRAC = 0.10
+SEED = 42
+LIMIT = 10
+MANIFEST_PATH = None
+```
+
+主な設定:
+
+| 変数 | 意味 |
+|---|---|
+| `DATA_DIR` | 問題セットのroot |
+| `OUTPUT_DIR` | 結果保存先 |
+| `SUBJECT` | 1 subjectだけ評価。`None`なら全subject |
+| `NTRAIN` | requested few-shot数 |
+| `SAMPLE_FRAC` | sampling割合 |
+| `SEED` | sampling seed |
+| `LIMIT` | 最大問題数。`0`なら制限なし |
+| `MANIFEST_PATH` | 既存manifestを再利用する場合のpath |
+
+### 最初の試験運用
+
+最初は必ず小さくしてください。
+
+```python
+LIMIT = 10
+```
+
+問題がなければ後で増やします。
+
+---
+
+## 8.4 Project settingsを確認する
+
+標準比較では次の設定を使用します。
+
+```python
+TOKENIZER = "gpt2"
+DEVICE = "cuda"
+DTYPE = "float32"
+BATCH_SIZE = 1
+MAX_CONTEXT_LENGTH = 2048
+CONTEXT_POLICY = "reduce"
+CONTEXT_TOKENIZER = "gpt2"
+PERMUTATION_COUNT = 4
+```
+
+通常の問題セット変更ではここを変更しません。
+
+AIkenGPT checkpointは、Notebookの設定に応じてHugging Faceから取得するか、`MODEL_PATH` でlocal `.safetensors` を指定します。
+
+現在のNotebook構成では、Hugging Face repositoryとcheckpoint filenameをProject settings側で管理します。
+
+---
+
+## 8.5 Notebookを上から実行する
+
+Notebookは次の順番で構成されています。
+
+1. Settings
+2. Environment setup
+3. Model loading
+4. Dataset / evaluator setup
+5. Preflight / manifest
+6. Evaluation
+7. Results
+
+基本的には **Runtime → Run all** で実行します。
+
+### Preflightで確認すること
+
+Evaluationに入る前に、Notebookはmanifestとprompt traceを作成し、最初のpromptを表示します。
+
+表示内容を見て、次を確認してください。
+
+- 問題数が想定どおりか
+- `prompts = questions × 4` になっているか
+- first promptが正しいか
+- few-shot例が意図したsubjectのものか
+- 選択肢の形式が崩れていないか
+- `effective_ntrain` が不自然に小さくなっていないか
+
+問題があればEvaluationを進めず、まずdata/settingsを修正してください。
+
+---
+
+# 9. AIkenGPT letter scoring
+
+`evaluate_aikengpt_mmlu.ipynb` は、prompt末尾の次tokenとして
+
+```text
+" A"
+" B"
+" C"
+" D"
+```
+
+のlogitを直接取得します。
+
+各ラベルがtokenizer上で1 tokenであることをbackendが検査します。
+
+生成 (`generate`) やsamplingは使用せず、4候補のlogitを直接比較します。
+
+OpenAIのletter scoringと比較する際の基本モードです。
+
+---
+
+# 10. AIkenGPT choice-text likelihood scoring
+
+`evaluate_aikengpt_mmlu_text.ipynb` は、A/B/C/Dという文字ではなく、**選択肢本文そのものの尤度**をteacher forcingで評価します。
+
+User settingsで次を指定します。
+
+```python
+TEXT_REDUCTION = "mean"
+```
+
+選択肢は次の2つです。
+
+### `sum`
+
+candidate tokenのlog probabilityを合計します。
+
+```text
+score = Σ log P(token_i | prompt, previous candidate tokens)
+```
+
+候補が長いほど負のlog probabilityを多く足すため、長い選択肢が不利になりやすい性質があります。
+
+### `mean`
+
+tokenごとのlog probabilityを平均します。
+
+```text
+score = mean(log P(token_i | ...))
+```
+
+candidate lengthで正規化したscoreです。
+
+`sum` と `mean` は異なる評価方式なので、結果を保存・比較するときはどちらを使ったか必ず明記してください。
+
+letter scoringとchoice-text scoringも異なる評価方式です。直接同一のscoreとして扱わないでください。
+
+---
+
+# 11. Manifestを使って同じ問題を評価する
+
+複数モデルを比較する場合は、**同じmanifestを使うことを強く推奨します。**
+
+manifestには、少なくとも各問題のsubjectとtest index、および再現性確認用の情報が保存されます。
+
+既存manifestを指定した場合、そのmanifestが評価対象として優先されます。
+
+## OpenAI
+
+```bash
+python evaluate_mmlu_openai_permutation.py \
+  --model gpt-4o-mini \
+  --data_dir "./datasets/mmlu" \
+  --manifest "./manifests/mmlu_trial.manifest.csv"
+```
+
+## AIkenGPT
+
+Notebookで:
+
+```python
+MANIFEST_PATH = Path("/content/drive/MyDrive/manifests/mmlu_trial.manifest.csv")
+```
+
+同じmanifestを使う場合は、datasetとEvalConfigも同じにしてください。
+
+特に次を揃えます。
+
+```text
+NTRAIN
+CONTEXT_POLICY
+CONTEXT_TOKENIZER
+MAX_CONTEXT_LENGTH
+PERMUTATION_COUNT
+```
+
+---
+
+# 12. OpenAIとAIkenGPTのpromptが同じか確認する
+
+各runでは、モデルに渡る前のcaseを `.prompts.jsonl` に保存します。
+
+OpenAI runとAIkenGPT runのtraceを比較するには:
+
+```bash
+python -m mmlu_eval.compare \
+  path/to/openai.prompts.jsonl \
+  path/to/aikengpt.prompts.jsonl
+```
+
+完全一致すれば、例えば次のように表示されます。
+
+```text
+Identical: 40 permutation cases
+```
+
+`compare.py` はwhitespaceを含むcase内容の差を検出します。
+
+モデル比較を行う場合、結果scoreを見る前にこの確認を行うと安全です。
+
+---
+
+# 13. 出力ファイル
+
+通常のrunでは、結果CSVのほかに再現性確認用ファイルが生成されます。
+
+例えば結果本体が
+
+```text
+results_xxx.csv
+```
+
+なら、同じstemで次のようなファイルが作られます。
+
+| ファイル | 内容 |
+|---|---|
+| `results_xxx.csv` | 各問題のprediction・score・probability |
+| `results_xxx.manifest.csv` | 評価した問題集合と再現性情報 |
+| `results_xxx.prompts.jsonl` | backend直前の全prompt/case |
+| `results_xxx.run.json` | pipeline、package、model等のrun metadata |
+| `results_xxx.subjects.csv` | subjectごとの集計 |
+| `results_xxx.overall.json` | 全問題の集計 |
+
+AIkenGPT NotebookではEvaluation前にもpreflight用のmanifest・prompt traceを保存します。
+
+---
+
+# 14. 結果の主な見方
+
+## Accuracy
+
+主に次の2つを確認します。
+
+```text
+baseline_accuracy
+```
+
+元の選択肢順だけで評価したaccuracyです。
+
+```text
+debiased_accuracy
+```
+
+4 permutationをsemantic choiceへ戻して平均した後のaccuracyです。
+
+## Prediction change
+
+位置バイアス補正によってpredictionが変わった影響を見るため、summaryには次の情報も含まれます。
+
+- wrong → correct
+- correct → wrong
+- baselineとdebiasedのaccuracy差
+
+## `effective_ntrain`
+
+各問題で実際に使用されたfew-shot数です。
+
+requested `NTRAIN=5` でもcontext budgetのため4以下になることがあります。
+
+---
+
+# 15. OpenAI top-logprobsに関する注意
+
+OpenAI backendはA/B/C/D候補のscoreをAPIのtop logprobsから取得します。
+
+候補がtop-kに現れない場合があるため、結果metadataには次の情報を保存します。
+
+```text
+missing_count
+error_bound
+fifth_logprob
+```
+
+4候補すべてが取得できない場合は、そのまま誤答として処理せずエラーにします。
+
+OpenAIモデルをsanity checkとして使用する場合、accuracyだけでなく `missing_count` や `error_bound` も確認してください。
+
+特に異なるOpenAIモデルへ差し替える場合、logprobの提供方法・tokenization・endpoint仕様が同じとは限りません。
+
+---
+
+# 16. Resume
+
+評価は1問単位で結果を保存します。
+
+同じoutput pathで再実行した場合、run metadata・manifest・model・settingsが一致していれば、完了済み問題を再利用して途中から再開できます。
+
+設定やモデルが異なる既存結果へ誤って追記しようとするとエラーになります。
+
+モデル・dataset・設定を変更した場合は、新しいoutput pathを使用してください。
+
+---
+
+# 17. テスト
+
+共通MMLU評価pipelineのテストだけを実行する場合:
+
+```bash
+python -m pytest tests/test_mmlu.py -q
+```
+
+PyTorchがインストールされていないlocal環境では、local AIkenGPT backendを使うテストがskipされることがあります。これは想定された挙動です。
+
+重要なのは `failed` / `error` がないことです。
+
+PyTorchが利用できるColab環境ではlocal backendのテストも実行してください。
+
+---
+
+# 18. 推奨する試験運用手順
+
+README自体とコードが一致していることを確認するため、初回は次の順番で実際に試してください。
+
+## Phase A: OpenAI dry run
+
+```bash
+python evaluate_mmlu_openai_permutation.py \
+  --model gpt-4o-mini \
+  --data_dir "<DATA_DIR>" \
+  --ntrain 5 \
+  --sample_frac 0.1 \
+  --seed 42 \
+  --limit 10 \
+  --dry_run
+```
+
+確認:
+
+- manifestが作られる
+- 10 questions / 40 permutation promptsになる
+- promptが正しい
+- `effective_ntrain` が妥当
+
+## Phase B: OpenAI 10問
+
+同じ条件から `--dry_run` を外して実行します。
+
+確認:
+
+- result CSVが生成される
+- baseline / debiased predictionが入る
+- overall summaryが生成される
+- missing_count / error_boundに異常がない
+
+## Phase C: AIkenGPT letter 10問
+
+OpenAIで作成したmanifestをNotebookの `MANIFEST_PATH` に指定します。
+
+```python
+LIMIT = 10
+MANIFEST_PATH = Path("<OPENAI_MANIFEST_PATH>")
+```
+
+Run allします。
+
+確認:
+
+- GPUでmodelがloadされる
+- checkpoint SHA256が表示される
+- 10 questions / 40 prompts
+- 結果CSVが生成される
+
+## Phase D: prompt一致
+
+OpenAIとAIkenGPTの `.prompts.jsonl` を比較します。
+
+```bash
+python -m mmlu_eval.compare \
+  <OPENAI_PROMPTS_JSONL> \
+  <AIKENGPT_PROMPTS_JSONL>
+```
+
+`Identical` が出ることを確認します。
+
+## Phase E: AIkenGPT choice-text
+
+同じmanifestで `evaluate_aikengpt_mmlu_text.ipynb` を実行します。
+
+まず:
+
+```python
+TEXT_REDUCTION = "mean"
+```
+
+で試し、必要に応じて `sum` も別runとして評価します。
+
+## Phase F: 本評価
+
+小規模試験が正常なら、目的に応じて設定を変更します。
+
+### 10% sample全体
+
+```text
+SAMPLE_FRAC = 0.10
+LIMIT = 0
+```
+
+### 全test問題
+
+```text
+SAMPLE_FRAC = 1.0
+LIMIT = 0
+```
+
+モデル比較では同じmanifestを再利用してください。
+
+---
+
+# 19. よくある問題
+
+## `pytest: command not found`
+
+```bash
+python -m pip install pytest
+python -m pytest tests/test_mmlu.py -q
+```
+
+`python -m pytest` を使うと、現在有効なPython環境のpytestを明示的に使えます。
+
+## OpenAI API keyがない
+
+```text
+openai.OpenAIError: Missing credentials
+```
+
+環境変数 `OPENAI_API_KEY` を設定してください。
+
+## `PROJECT_DIR must point to the repository containing mmlu_eval/`
+
+Colab Notebookの `PROJECT_DIR` がリポジトリrootを指していません。
+
+```python
+PROJECT_DIR = Path("/content/drive/MyDrive/<YOUR_REPOSITORY_DIRECTORY>")
+```
+
+を確認してください。
+
+## `DATA_DIR must contain dev/ and test/`
+
+`DATA_DIR` がdataset rootではない可能性があります。
+
+正しい構成:
+
+```text
+DATA_DIR/
+├── dev/
+└── test/
+```
+
+## `Prompt exceeds context`
+
+標準比較では `CONTEXT_POLICY="reduce"` を使用してください。
+
+0-shotでもcontextを超える問題はそのまま評価できません。
+
+## 同じoutput pathなのにresumeできない
+
+model、dataset、manifest、source、settingsなどが前回runと異なる可能性があります。
+
+別のoutput pathを使用してください。
+
+---
+
+# 20. 比較実験で固定すべきもの
+
+モデル性能を比較したい場合は、少なくとも次を固定してください。
+
+```text
+dataset
+manifest
+NTRAIN
+CONTEXT_POLICY
+CONTEXT_TOKENIZER
+MAX_CONTEXT_LENGTH
+PERMUTATION_COUNT
+prompt pipeline
+scoring method
+```
+
+そのうえで、比較したい変数だけを変更します。
+
+### OpenAIモデル同士の比較
+
+```text
+変える: --model
+固定: dataset + manifest + EvalConfig
+```
+
+### OpenAIとAIkenGPT letter scoringの比較
+
+```text
+変える: backend / model
+固定: dataset + manifest + EvalConfig + prompt + aggregation
+```
+
+### AIkenGPTのletterとchoice-textの比較
+
+```text
+変える: scoring_method
+固定: dataset + manifest + EvalConfig
+```
+
+ただしletterとchoice-textはscoreの定義そのものが異なるため、同一指標として解釈しないでください。
+
+---
+
+# 21. 実験結果を共有するときに残すもの
+
+再現性のため、最低限次を残してください。
+
+- 使用したmodel名 / checkpoint
+- checkpoint SHA256（AIkenGPT）
+- dataset
+- manifest
+- `NTRAIN`
+- `effective_ntrain` の分布
+- `SAMPLE_FRAC`
+- `SEED`
+- context settings
+- scoring method
+- result CSV
+- `.overall.json`
+- `.run.json`
+- `.prompts.jsonl`
+
+OpenAIの場合は、可能ならresolved modelやsystem fingerprintなどrun metadataに記録された情報も保持してください。
+
+API keyや個人PCの絶対pathはGitHubへcommitしないでください。
+
+---
+
+# 22. この評価pipelineの目的
+
+この実装では、OpenAIとAIkenGPTを比較するときに、モデル以外の違いを可能な限り共通化することを重視しています。
+
+つまり、
+
+```text
+同じ問題
+同じfew-shot examples
+同じeffective_ntrain
+同じprompt文字列
+同じ4 permutations
+同じsemantic mapping
+同じaggregation
+        ↓
+モデル固有のscoringだけを差し替える
+```
+
+という構造です。
+
+特にOpenAIモデルで評価pipelineをsanity checkした後、同じmanifest・同じpre-backend inputをAIkenGPTへ与えることで、評価実装の差ではなくモデルの差を検討しやすくしています。
+
+---
+
+## 最初のおすすめ設定
+
+迷った場合は、まず次で10問だけ試してください。
+
+```text
+NTRAIN = 5
+SAMPLE_FRAC = 0.10
+SEED = 42
+LIMIT = 10
+CONTEXT_POLICY = reduce
+CONTEXT_TOKENIZER = gpt2
+MAX_CONTEXT_LENGTH = 2048
+PERMUTATION_COUNT = 4
+```
+
+これが正常に動いてから、`LIMIT=0` や `SAMPLE_FRAC=1.0` に広げてください。
