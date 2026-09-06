@@ -7,3 +7,8 @@ __pycache__/
 .env
 
 data/
+.test-deps/
+
+verification/
+
+results/

@@ -1,3 +1,17 @@
+"""Legacy evaluator kept only for reproducing historical runs.
+
+New evaluations must use evaluate_mmlu_openai_permutation.py, which routes
+through the shared mmlu_eval pipeline used by AIkenGPT.
+"""
+import warnings
+
+warnings.warn(
+    "evaluate_openai.py is outside the shared mmlu_eval pipeline. "
+    "Use evaluate_mmlu_openai_permutation.py for new evaluations.",
+    FutureWarning,
+    stacklevel=2,
+)
+
 import argparse
 import os
 import time
