@@ -25,7 +25,20 @@ easy-jmmlu/
 └── test/jcommonsenseqa_test.csv
 ```
 
-AIkenGPT評価Notebookの `DATA_DIR` をこのフォルダにし、`SUBJECT = "jcommonsenseqa"`、`NTRAIN = 5` にします。
+## MMLU評価Notebook用データ
+
+`prepare_eval_data.py`で、評価Notebookが読める6列CSVを`eval_data/`に作成します。
+
+```text
+eval_data/
+├── dev/jcommonsenseqa_dev.csv       # trainから5問
+├── train/jcommonsenseqa_train.csv   # train全件
+└── test/jcommonsenseqa_test.csv     # validation 921問
+```
+
+`evaluate_aikengpt_mmlu.ipynb`は`dev/`と`test/`を参照します。Colabではセル2の`DATA_SOURCE`を`github`（既定）、`drive`、`local`から選べます。Driveを選ぶ場合は`eval_data/`フォルダを`MyDrive/easy-jmmlu/`に置きます。手動アップロードの場合は`/content/eval_data/`に置きます。
+
+元の30問セットを使う場合は、評価Notebookの`DATA_DIR`を`easy-jmmlu/`にし、`SUBJECT = "jcommonsenseqa"`、`NTRAIN = 5`にします。921問のvalidationを評価する場合は、`DATA_DIR`を`easy-jmmlu/eval_data/`にします。
 
 ## 全体版JSONL
 
