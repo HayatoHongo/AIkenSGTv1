@@ -1,0 +1,4 @@
+.env
+*.jsonl
+!gkentei_generated_deepinfra_10000_workers20_reviewed_parallel20.jsonl
+__pycache__/
