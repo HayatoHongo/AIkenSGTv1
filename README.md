@@ -12,3 +12,4 @@ remove_gkentei_errors.py
 gkentei_drop_numbered.py
 shuffle_gkentei.py
 全体のサンプルをシャッフル（JSONLの問題レコード全体の並び替え）
+format_gkentei_prompt_response.py
