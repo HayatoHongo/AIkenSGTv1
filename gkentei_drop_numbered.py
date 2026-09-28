@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Drop questions whose explanations mention an option number."""
 
+import argparse
 import json
 from pathlib import Path
 
@@ -15,9 +16,29 @@ NUMBERED_PHRASES = (
     "①", "②", "③", "④",
 )
 
-with INPUT.open(encoding="utf-8") as source, OUTPUT.open("w", encoding="utf-8") as output:
-    for line in source:
-        record = json.loads(line)
-        explanation = record["overall_explanation"]
-        if not any(phrase in explanation for phrase in NUMBERED_PHRASES):
-            output.write(line)
+def main():
+    parser = argparse.ArgumentParser(description="選択肢番号に言及する解説の問題を除外します")
+    parser.add_argument("input", nargs="?", type=Path, default=INPUT)
+    parser.add_argument("output", nargs="?", type=Path, default=OUTPUT)
+    args = parser.parse_args()
+
+    kept = 0
+    removed = 0
+    with args.input.open(encoding="utf-8") as source, args.output.open(
+        "w", encoding="utf-8"
+    ) as output:
+        for line in source:
+            record = json.loads(line)
+            explanation = record["overall_explanation"]
+            if any(phrase in explanation for phrase in NUMBERED_PHRASES):
+                removed += 1
+            else:
+                kept += 1
+                record["question_id"] = f"gkgen_{kept:05d}"
+                output.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    print(f"完了: 残した行={kept}, 除外した行={removed}, 出力={args.output}")
+
+
+if __name__ == "__main__":
+    main()
